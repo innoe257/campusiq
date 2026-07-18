@@ -1,0 +1,12 @@
+with:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: campusiq-postgres
+      port: 5432
+      user: campusiq
+      password: campusiq_dev_password
+      dbname: campusiq
+      schema: dbt_dev
+      threads: 4

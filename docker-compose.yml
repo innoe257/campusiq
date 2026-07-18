@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: campusiq-postgres
+    environment:
+      POSTGRES_USER: campusiq
+      POSTGRES_PASSWORD: campusiq_dev_password
+      POSTGRES_DB: campusiq
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/app/db/init_vector_store.sql:/docker-entrypoint-initdb.d/init_vector_store.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campusiq -d campusiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: campusiq-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # Ollama for local LLM inference
+  ollama:
+    image: ollama/ollama:latest
+    container_name: campusiq-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # GPU support is optional; Ollama runs on CPU if no GPU available
+
+  # MLflow for experiment tracking
+  mlflow:
+    image: python:3.11-slim
+    container_name: campusiq-mlflow
+    environment:
+      MLFLOW_TRACKING_URI: http://0.0.0.0:5000
+      MLFLOW_BACKEND_STORE_URI: postgresql://campusiq:campusiq_dev_password@postgres:5432/mlflow
+      MLFLOW_ARTIFACT_ROOT: /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      bash -c "pip install mlflow psycopg2-binary &&
+               mlflow server
+               --backend-store-uri $${MLFLOW_BACKEND_STORE_URI}
+               --default-artifact-root $${MLFLOW_ARTIFACT_ROOT}
+               --host 0.0.0.0
+               --port 5000"
+
+  # Airflow PostgreSQL
+  airflow-postgres:
+    image: postgres:15
+    container_name: campusiq-airflow-db
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+
+  # Airflow
+  airflow:
+    image: apache/airflow:2.8.1
+    container_name: campusiq-airflow
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+    volumes:
+      - ./data_pipeline/dags:/opt/airflow/dags
+      - ./data_pipeline/dbt:/opt/airflow/dbt
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    depends_on:
+      - airflow-postgres
+    command: >
+      bash -c "airflow db init &&
+               airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@campusiq.local &&
+               airflow webserver"
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: campusiq-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://campusiq:campusiq_dev_password@postgres:5432/campusiq
+      REDIS_URL: redis://redis:6379/0
+      OLLAMA_HOST: http://ollama:11434
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      SECRET_KEY: campusiq_dev_secret_key_change_in_production
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      mlflow:
+        condition: service_started
+      ollama:
+        condition: service_started
+    command: >
+      bash -c "cd /app &&
+               pip install -r requirements.txt &&
+               python -m app.db.init_vector_store &&
+               uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: campusiq-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NODE_ENV: development
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    command: >
+      bash -c "cd /app &&
+               npm install &&
+               npm run dev"
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  mlflow_data:
+  airflow_postgres_data:

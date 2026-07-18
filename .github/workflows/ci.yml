@@ -1,0 +1,212 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: ankane/pgvector:latest
+        env:
+          POSTGRES_USER: campusiq
+          POSTGRES_PASSWORD: campusiq_test
+          POSTGRES_DB: campusiq_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install backend dependencies
+      run: |
+        cd backend
+        pip install -r requirements.txt
+
+    - name: Lint backend
+      run: |
+        cd backend
+        flake8 app --count --select=E9,F63,F7,F82 --show-source --statistics
+        black --check app
+
+    - name: Test backend
+      env:
+        DATABASE_URL: postgresql+psycopg2://campusiq:campusiq_test@localhost:5432/campusiq_test
+        REDIS_URL: redis://localhost:6379/0
+        SECRET_KEY: test_secret_key
+      run: |
+        cd backend
+        pytest tests/ -v --tb=short
+
+  test-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        cache-dependency-path: frontend/package-lock.json
+
+    - name: Install frontend dependencies
+      run: |
+        cd frontend
+        npm install
+
+    - name: Lint frontend
+      run: |
+        cd frontend
+        npm run lint
+
+    - name: Build frontend
+      run: |
+        cd frontend
+        npm run build
+
+  ml-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install ML dependencies
+      run: |
+        pip install -r backend/requirements.txt
+
+    - name: Generate data and test ML pipeline
+      run: |
+        python data_pipeline/data_generator.py
+        python ml/models/train.py
+
+    - name: Upload model artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ml-model
+        path: ml/models/*.pkl
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build backend Docker image
+      run: |
+        docker build -t campusiq-backend:latest ./backend
+
+    - name: Build frontend Docker image
+      run: |
+        docker build -t campusiq-frontend:latest ./frontend
+
+    - name: Test Docker Compose
+      run: |
+        docker-compose up -d postgres redis
+        sleep 10
+        docker-compose ps
+        docker-compose down
+
+  terraform-plan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: "1.7.0"
+
+    - name: Terraform Format Check
+      run: |
+        cd infrastructure/terraform
+        terraform fmt -check
+
+    - name: Terraform Init
+      run: |
+        cd infrastructure/terraform
+        terraform init -backend=false
+
+    - name: Terraform Validate
+      run: |
+        cd infrastructure/terraform
+        terraform validate
+
+    - name: Terraform Plan
+      run: |
+        cd infrastructure/terraform
+        terraform plan -input=false
+      env:
+        TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-frontend, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ap-southeast-2
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Build and push backend
+      run: |
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/campusiq-backend:${{ github.sha }} ./backend
+        docker push ${{ steps.login-ecr.outputs.registry }}/campusiq-backend:${{ github.sha }}
+
+    - name: Build and push frontend
+      run: |
+        docker build -t ${{ steps.login-ecr.outputs.registry }}/campusiq-frontend:${{ github.sha }} ./frontend
+        docker push ${{ steps.login-ecr.outputs.registry }}/campusiq-frontend:${{ github.sha }}
+
+    - name: Deploy to ECS
+      run: |
+        aws ecs update-service --cluster campusiq-cluster --service campusiq-backend --force-new-deployment
+        aws ecs update-service --cluster campusiq-cluster --service campusiq-frontend --force-new-deployment

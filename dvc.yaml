@@ -1,0 +1,21 @@
+stages:
+  prepare:
+    cmd: python data_pipeline/data_generator.py
+    deps:
+      - data_pipeline/data_generator.py
+    outs:
+      - data/synthetic_students.csv:
+          cache: true
+          persist: true
+  
+  train:
+    cmd: python ml/models/train.py
+    deps:
+      - ml/models/train.py
+      - data/synthetic_students.csv
+    outs:
+      - ml/models/attrition_model.pkl
+      - ml/models/scaler.pkl
+    metrics:
+      - metrics.json:
+          cache: false

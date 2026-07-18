@@ -1,0 +1,3 @@
+# Data directory
+# This directory is used for synthetic data generation and ML artifacts
+# Files here are gitignored but the directory is tracked
