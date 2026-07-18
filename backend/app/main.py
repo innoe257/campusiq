@@ -1,6 +1,5 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from app.core.config import get_settings
 from app.db.session import engine, Base
 from app.api.v1 import auth, students, predictions, chat
@@ -16,10 +15,20 @@ app = FastAPI(
     version=settings.VERSION,
 )
 
-# CORS middleware
+# CORS - allow Render frontend and local development
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://campusiq-frontend.onrender.com",
+    "https://*.onrender.com",
+]
+
+if settings.FRONTEND_URL:
+    origins.append(settings.FRONTEND_URL)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,6 +47,7 @@ async def root():
         "message": "Welcome to CampusIQ API",
         "version": settings.VERSION,
         "documentation": "/docs",
+        "environment": "render" if settings.RENDER else "local",
     }
 
 

@@ -1,15 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { AlertTriangle, Users, TrendingUp, BookOpen } from 'lucide-react';
-
-interface DashboardStats {
-  total_students: number;
-  active_students: number;
-  risk_distribution: Record<string, number>;
-  average_gpa: number;
-}
+import { api, DashboardStats, Student } from '../../lib/api';
 
 const RISK_COLORS: Record<string, string> = {
   critical: '#ef4444',
@@ -20,20 +14,37 @@ const RISK_COLORS: Record<string, string> = {
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [useMock, setUseMock] = useState(false);
 
   useEffect(() => {
-    // Simulated fetch - in production, this would call the API
-    const mockStats: DashboardStats = {
-      total_students: 1247,
-      active_students: 1189,
-      risk_distribution: { low: 856, medium: 234, high: 112, critical: 45 },
-      average_gpa: 3.2,
-    };
-    setTimeout(() => {
-      setStats(mockStats);
-      setLoading(false);
-    }, 500);
+    async function loadData() {
+      try {
+        // Try to fetch from API
+        const [statsData, studentsData] = await Promise.all([
+          api.getDashboardStats(),
+          api.getStudents(),
+        ]);
+        setStats(statsData);
+        setStudents(studentsData);
+        setError(null);
+      } catch (err) {
+        console.warn('API unavailable, using mock data:', err);
+        setUseMock(true);
+        // Fallback mock data
+        setStats({
+          total_students: 1247,
+          active_students: 1189,
+          risk_distribution: { low: 856, medium: 234, high: 112, critical: 45 },
+          average_gpa: 3.2,
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
   }, []);
 
   const riskData = stats ? Object.entries(stats.risk_distribution).map(([category, count]) => ({
@@ -64,6 +75,9 @@ export default function DashboardPage() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-900">Faculty Dashboard</h1>
           <p className="text-slate-600">Student success analytics and intervention insights</p>
+          {useMock && (
+            <p className="text-xs text-amber-600 mt-1">Using demo data (API connection unavailable)</p>
+          )}
         </div>
 
         {/* Stats Cards */}
@@ -100,15 +114,7 @@ export default function DashboardPage() {
             <h2 className="text-lg font-bold mb-4">Risk Distribution</h2>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
-                <Pie
-                  data={riskData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
+                <Pie data={riskData} cx="50%" cy="50%" innerRadius={60} outerRadius={100} paddingAngle={5} dataKey="value">
                   {riskData.map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={entry.color} />
                   ))}

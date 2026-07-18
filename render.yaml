@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: campusiq-backend
+    runtime: python
+    plan: free
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && bash render-start.sh
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 30
+      - key: RENDER
+        value: "true"
+      - key: FRONTEND_URL
+        value: https://campusiq-frontend.onrender.com
+      - key: MLFLOW_TRACKING_URI
+        value: sqlite:///tmp/mlflow.db
+      - key: OLLAMA_HOST
+        value: ""
+      - key: REDIS_URL
+        value: ""
+      - key: EMBEDDING_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: LLM_MODEL
+        value: llama2
+      - key: VECTOR_DIMENSION
+        value: "384"
+    healthCheckPath: /health
+
+  - type: web
+    name: campusiq-frontend
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/out
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: NEXT_PUBLIC_API_URL
+        value: https://campusiq-backend.onrender.com
+
+databases:
+  - name: campusiq-db
+    plan: free
+    databaseName: campusiq
+    user: campusiq
