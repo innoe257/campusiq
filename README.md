@@ -12,6 +12,12 @@
   <a href="#deployment">Deployment</a>
 </p>
 
+<p align="center">
+  <a href="https://render.com/deploy?repo=https://github.com/innoe257/campusiq">
+    <img src="https://render.com/images/deploy-to-render-button.svg" alt="Deploy to Render" />
+  </a>
+</p>
+
 ---
 
 ## Overview
@@ -266,6 +272,76 @@ This provisions:
 - RDS PostgreSQL with pgvector
 - Application Load Balancer
 - ECR repositories for Docker images
+
+### Render Deployment (Free Live URL)
+
+The fastest way to get a live URL for employers is deploying to **Render**.
+
+#### Option 1: One-Click Deploy (Recommended)
+
+Click the button below and Render will automatically:
+- Create a PostgreSQL database
+- Deploy the FastAPI backend
+- Deploy the Next.js frontend as a static site
+- Generate environment variables
+- Run database migrations and seed sample data
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/innoe257/campusiq)
+
+#### Option 2: Manual Deploy
+
+1. **Create a Render account** at [render.com](https://render.com) (free, no credit card)
+
+2. **Create a PostgreSQL database**:
+   - Dashboard → New → PostgreSQL
+   - Name: `campusiq-db`
+   - Region: Oregon (US West) or Singapore (Asia)
+   - Plan: Free
+
+3. **Deploy the Backend**:
+   - Dashboard → New → Web Service
+   - Connect your GitHub repo `innoe257/campusiq`
+   - Name: `campusiq-backend`
+   - Environment: Python 3
+   - Build Command: `cd backend && pip install -r requirements.txt`
+   - Start Command: `cd backend && bash render-start.sh`
+   - Add environment variables:
+     - `DATABASE_URL` → copy from your PostgreSQL "Internal Database URL"
+     - `SECRET_KEY` → generate a random string
+     - `FRONTEND_URL` → `https://campusiq-frontend.onrender.com`
+     - `RENDER` → `true`
+
+4. **Deploy the Frontend**:
+   - Dashboard → New → Static Site
+   - Connect the same repo
+   - Name: `campusiq-frontend`
+   - Build Command: `cd frontend && npm install && npm run build`
+   - Publish Directory: `frontend/out`
+   - Add environment variable:
+     - `NEXT_PUBLIC_API_URL` → `https://campusiq-backend.onrender.com`
+
+5. **Update CORS** (if needed):
+   - After frontend deploys, copy its URL
+   - Add it to the backend's `FRONTEND_URL` environment variable
+   - Redeploy backend
+
+#### What Works on Render Free Tier
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Faculty Dashboard | ✅ Live | Full interactive charts |
+| Student Directory | ✅ Live | Search, filter, risk scores |
+| AI Chat Advisor | ✅ Live | Intelligent demo responses |
+| Authentication | ✅ Live | JWT login/register |
+| Predictions API | ✅ Live | Rule-based risk scoring |
+| RAG (Vector Search) | ⚠️ Demo Mode | No pgvector on free PostgreSQL |
+| Ollama LLM | ❌ Not Available | No GPU on free tier |
+| MLflow UI | ❌ Not Available | Replaced with SQLite backend |
+| Airflow | ❌ Not Available | ETL not scheduled |
+
+> **Note:** Free tier web services "sleep" after 15 minutes of inactivity. The first request after sleep takes ~30 seconds to wake up. For interviews, wake the service beforehand by visiting the URL.
+
+---
 
 ### CI/CD
 
